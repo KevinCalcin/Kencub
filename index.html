@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cubo de Rubik 3D en Partículas</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background-color: #08080c;
+      color: #ffffff;
+      font-family: system-ui, -apple-system, sans-serif;
+      overflow: hidden;
+    }
+    #canvas3d {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 1;
+    }
+    .info {
+      position: absolute;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 2;
+      background: rgba(255, 255, 255, 0.05);
+      backdrop-filter: blur(8px);
+      padding: 12px 24px;
+      border-radius: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      font-size: 0.9rem;
+      color: #a0a0c0;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+  <canvas id="canvas3d"></canvas>
+  <div class="info">Mueve el ratón para rotar el Cubo de Rubik en 3D</div>
+
+  <script>
+    const canvas = document.getElementById('canvas3d');
+    const ctx = canvas.getContext('2d');
+
+    function resize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // -------------------------------------------------------------
+    // 1. GENERADOR DE DATOS 3D PARA EL CUBO DE RUBIK (JSON)
+    // -------------------------------------------------------------
+    function generateRubikJSON() {
+      const particles = [];
+      const cubies = [-1, 0, 1];
+      const cubieSize = 34; // Tamaño de cada pieza
+      const gap = 5;         // Separación entre piezas
+
+      // Colores oficiales
+      const C_TOP    = 'rgb(255, 213, 0)';   // Amarillo (+Y)
+      const C_BOTTOM = 'rgb(255, 255, 255)'; // Blanco (-Y)
+      const C_FRONT  = 'rgb(183, 18, 52)';   // Rojo (+Z)
+      const C_BACK   = 'rgb(255, 88, 0)';    // Naranja (-Z)
+      const C_RIGHT  = 'rgb(0, 70, 173)';   // Azul (+X)
+      const C_LEFT   = 'rgb(0, 158, 96)';    // Verde (-X)
+      const C_INNER  = 'rgb(15, 15, 20)';    // Bisel/Borde negro
+
+      const density = 6; // Puntos por arista de cada pieza
+
+      for (let cx of cubies) {
+        for (let cy of cubies) {
+          for (let cz of cubies) {
+            if (cx === 0 && cy === 0 && cz === 0) continue; // Omite el centro oculto
+
+            const centerX = cx * (cubieSize + gap);
+            const centerY = cy * (cubieSize + gap);
+            const centerZ = cz * (cubieSize + gap);
+            const half = cubieSize / 2;
+
+            for (let i = 0; i < density; i++) {
+              const u = -half + (i / (density - 1)) * cubieSize;
+              for (let j = 0; j < density; j++) {
+                const v = -half + (j / (density - 1)) * cubieSize;
+                const isBorder = (i === 0 || i === density - 1 || j === 0 || j === density - 1);
+
+                // Generar caras del sub-cubo
+                particles.push({ x: centerX + u, y: centerY + half, z: centerZ + v, color: isBorder || cy !== 1 ? C_INNER : C_TOP });
+                particles.push({ x: centerX + u, y: centerY - half, z: centerZ + v, color: isBorder || cy !== -1 ? C_INNER : C_BOTTOM });
+                particles.push({ x: centerX + u, y: centerY + v, z: centerZ + half, color: isBorder || cz !== 1 ? C_INNER : C_FRONT });
+                particles.push({ x: centerX + u, y: centerY + v, z: centerZ - half, color: isBorder || cz !== -1 ? C_INNER : C_BACK });
+                particles.push({ x: centerX + half, y: centerY + u, z: centerZ + v, color: isBorder || cx !== 1 ? C_INNER : C_RIGHT });
+                particles.push({ x: centerX - half, y: centerY + u, z: centerZ + v, color: isBorder || cx !== -1 ? C_INNER : C_LEFT });
+              }
+            }
+          }
+        }
+      }
+      return particles;
+    }
+
+    // Puntos del modelo 3D
+    const rubikParticles = generateRubikJSON();
+
+    // -------------------------------------------------------------
+    // 2. MOTOR DE PROYECCIÓN Y FÍSICA 3D NATIVA
+    // -------------------------------------------------------------
+    const focalLength = 400; // Distancia focal de la cámara
+    let angleX = 0.4;
+    let angleY = 0.6;
+    let targetAngleX = 0.4;
+    let targetAngleY = 0.6;
+
+    window.addEventListener('mousemove', (e) => {
+      const mouseX = (e.clientX - canvas.width / 2) / (canvas.width / 2);
+      const mouseY = (e.clientY - canvas.height / 2) / (canvas.height / 2);
+      
+      targetAngleY = mouseX * 2.5; // Rotación amplia en Y
+      targetAngleX = -mouseY * 2.5; // Rotación amplia en X
+    });
+
+    function animate() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Inercia de movimiento suave
+      angleX += (targetAngleX - angleX) * 0.04;
+      angleY += (targetAngleY - angleY) * 0.04;
+
+      // Rotación continua sutil
+      const currentAngleY = angleY + Date.now() * 0.0003;
+
+      const cosY = Math.cos(currentAngleY);
+      const sinY = Math.sin(currentAngleY);
+      const cosX = Math.cos(angleX);
+      const sinX = Math.sin(angleX);
+
+      // Transformar coordenadas 3D de cada partícula
+      const projectedParticles = [];
+
+      for (let p of rubikParticles) {
+        // Rotación Eje Y
+        const x1 = p.x * cosY - p.z * sinY;
+        const z1 = p.x * sinY + p.z * cosY;
+
+        // Rotación Eje X
+        const y1 = p.y * cosX - z1 * sinX;
+        const z2 = p.y * sinX + z1 * cosX;
+
+        // Profundidad de cámara Z
+        const depth = z2 + 380;
+        if (depth <= 10) continue;
+
+        const scale = focalLength / depth;
+        const projX = (canvas.width / 2) + x1 * scale;
+        const projY = (canvas.height / 2) + y1 * scale;
+        const size = Math.max(0.8, 2.2 * scale);
+
+        projectedParticles.push({
+          x: projX,
+          y: projY,
+          z: z2,
+          size: size,
+          color: p.color,
+          alpha: Math.min(1, Math.max(0.2, scale * 0.85))
+        });
+      }
+
+      // Ordenar por profundidad Z (Painter's Algorithm) para oclusión correcta
+      projectedParticles.sort((a, b) => b.z - a.z);
+
+      // Renderizar partículas
+      for (let p of projectedParticles) {
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = p.alpha;
+        ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+      }
+
+      requestAnimationFrame(animate);
+    }
+
+    animate();
+  </script>
+</body>
+</html>
